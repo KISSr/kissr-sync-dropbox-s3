@@ -1,0 +1,93 @@
+package main
+
+//
+// import (
+// 	"log"
+// 	"os"
+//
+// 	"github.com/aws/aws-sdk-go/aws"
+// 	"github.com/aws/aws-sdk-go/aws/session"
+// 	"github.com/aws/aws-sdk-go/service/s3"
+// 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+// 	"github.com/joho/godotenv"
+// 	"github.com/stacktic/dropbox"
+// )
+//
+// //
+// // type ChangeSet struct {
+// // 	Delta struct {
+// // 		Users []int `json:"users"`
+// // 	} `json:"delta"`
+// // }
+// //
+//
+// func Dropbox(token string) *dropbox.Dropbox {
+// 	db := dropbox.NewDropbox()
+// 	db.SetAppInfo(
+// 		os.Getenv("DROPBOX_KEY"),
+// 		os.Getenv("DROPBOX_SECRET"))
+//
+// 	db.SetAccessToken(token)
+// 	return db
+// }
+//
+// func processPage(page *dropbox.DeltaPage, db *dropbox.Dropbox) {
+// 	for _, entry := range page.Entries {
+// 		if entry.Entry.IsDir {
+// 			continue
+// 		}
+//
+// 		if entry.Entry.IsDeleted {
+// 			deleteFromS3(entry.Entry.Path, db)
+// 		} else {
+// 			copyToS3(entry.Entry.Path, db)
+// 		}
+//
+// 		if page.HasMore {
+// 			nextPage, err := db.Delta(page.Cursor.Cursor, "")
+// 			checkErr(err)
+// 			processPage(nextPage, db)
+// 		}
+// 	}
+// }
+//
+// func deleteFromS3(path string, db *dropbox.Dropbox) {
+// 	svc := s3.New(session.New())
+// 	params := &s3.DeleteObjectInput{
+// 		Bucket: aws.String(os.Getenv("AWS_BUCKET")),
+// 		Key:    aws.String(path),
+// 	}
+// 	_, err := svc.DeleteObject(params)
+// 	checkErr(err)
+// }
+//
+// func copyToS3(path string, db *dropbox.Dropbox) {
+// 	file, _, err := db.Download(path, "", 0)
+//
+// 	uploader := s3manager.NewUploader(session.New(&aws.Config{}))
+// 	_, err = uploader.Upload(&s3manager.UploadInput{
+// 		Body:   file,
+// 		Bucket: aws.String(os.Getenv("AWS_BUCKET")),
+// 		Key:    aws.String(path),
+// 	})
+// 	checkErr(err)
+// }
+// func syncToS3(id string, token string) {
+// 	db := Dropbox(token)
+// 	page, err := db.Delta("", "")
+// 	checkErr(err)
+// 	processPage(page, db)
+// }
+// func main() {
+// 	err := godotenv.Load()
+// 	if err != nil {
+// 		log.Fatal("Error loading .env file")
+// 	}
+// 	syncToS3("28186709", "uXS1ja3gLiUAAAAAAAAOP_0LSkGqhDpUB7lbdFtdqs6IG756xs7IIMfTJJgVRvCv")
+// }
+//
+// func checkErr(err error) {
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// }
