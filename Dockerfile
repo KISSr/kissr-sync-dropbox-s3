@@ -6,7 +6,7 @@ RUN go get github.com/joho/godotenv
 RUN go get github.com/aws/aws-sdk-go/aws
 RUN go get gopkg.in/redis.v3
 RUN go get github.com/lib/pq
-RUN go get github.com/stacktic/dropbox
+RUN go get github.com/dropbox/dropbox-sdk-go-unofficial
 
 RUN go get github.com/joho/godotenv
 RUN go install github.com/kissr/kissr-sync-dropbox-s3

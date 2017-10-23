@@ -9,23 +9,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
+	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
-	"github.com/stacktic/dropbox"
 	"gopkg.in/redis.v3"
 )
 
 type ChangeSet struct {
-	Delta struct {
-		Users []int `json:"users"`
-	} `json:"delta"`
+	ListFolder struct {
+		Accounts []string `json:"accounts"`
+	} `json:"list_folder"`
 }
 
 type httpHandler struct{}
@@ -43,36 +42,13 @@ func (th *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func Dropbox(token string) *dropbox.Dropbox {
-	db := dropbox.NewDropbox()
-	db.SetAppInfo(
-		os.Getenv("DROPBOX_KEY"),
-		os.Getenv("DROPBOX_SECRET"))
-
-	db.SetAccessToken(token)
-	return db
-}
-
-func processDeltas(id int, page *dropbox.DeltaPage, db *dropbox.Dropbox) {
-	for _, entry := range page.Entries {
-		if entry.Entry == nil {
-			deleteFromS3(entry.Path, db)
-		} else if !entry.Entry.IsDir &&
-			shouldSync(entry.Entry.Path, id) {
-			copyToS3(entry.Entry.Path, db)
-		}
-
-		if page.HasMore {
-			nextPage, err := db.Delta(page.Cursor.Cursor, "")
-			checkErr(err)
-			processDeltas(id, nextPage, db)
-		}
+func Dropbox(token string) dropbox.Config {
+	return dropbox.Config{
+		Token: token,
 	}
-	r := redisClient()
-	r.HSet("cursors", strconv.Itoa(id), page.Cursor.Cursor)
 }
 
-func shouldSync(path string, id int) bool {
+func shouldSync(path string, id string) bool {
 	domain := path[1 : strings.Index(path[1:], "/")+1]
 	db := postgresClient()
 	defer db.Close()
@@ -81,29 +57,16 @@ func shouldSync(path string, id int) bool {
 	return owned.Next()
 }
 
-func deleteFromS3(path string, db *dropbox.Dropbox) {
-	fmt.Println("Deleting: ", path)
-	svc := s3.New(session.New())
-	params := &s3.DeleteObjectInput{
-		Bucket: aws.String(os.Getenv("AWS_BUCKET")),
-		Key:    aws.String(path),
-	}
-	_, err := svc.DeleteObject(params)
-	checkErr(err)
-}
-
-func copyToS3(path string, db *dropbox.Dropbox) {
+func copyToS3(path string, body io.Reader) {
 	fmt.Println("Copying: ", path)
-	file, _, err := db.Download(path, "", 0)
 	uploader := s3manager.NewUploader(session.New(&aws.Config{}))
-	_, err = uploader.Upload(&s3manager.UploadInput{
-		Body:        file,
+	_, _ = uploader.Upload(&s3manager.UploadInput{
+		Body:        body,
 		Bucket:      aws.String(os.Getenv("AWS_BUCKET")),
 		Key:         aws.String(path),
 		ACL:         aws.String("public-read"),
 		ContentType: aws.String(contentType(path)),
 	})
-	checkErr(err)
 }
 
 func contentType(filename string) string {
@@ -113,22 +76,47 @@ func contentType(filename string) string {
 	)
 }
 
-func syncToS3(id int, token string) {
-	db := Dropbox(token)
-	processDeltas(id, deltas(db, token, id), db)
-}
-
-func deltas(db *dropbox.Dropbox, token string, id int) *dropbox.DeltaPage {
+func syncToS3(userId string, token string) {
 	r := redisClient()
-
-	cursor, err := r.HGet("cursors", strconv.Itoa(id)).Result()
-	if err != redis.Nil {
-		checkErr(err)
-	}
-	page, err := db.Delta(cursor, "")
+	cursor, err := r.HGet("cursors", userId).Result()
 	checkErr(err)
+	config := dropbox.Config{
+		Token: token,
+	}
+	dbx := files.New(config)
 
-	return page
+	var res *files.ListFolderResult
+	var continue_arg *files.ListFolderContinueArg
+	if cursor == "" {
+		arg := files.NewListFolderArg("")
+		arg.Recursive = true
+		res, _ = dbx.ListFolder(arg)
+		r.HSet("cursors", userId, res.Cursor)
+	} else {
+		continue_arg = files.NewListFolderContinueArg(cursor)
+		res, _ = dbx.ListFolderContinue(continue_arg)
+		r.HSet("cursors", userId, res.Cursor)
+	}
+
+	entries := res.Entries
+	for res.HasMore {
+		continue_arg = files.NewListFolderContinueArg(res.Cursor)
+		res, _ = dbx.ListFolderContinue(continue_arg)
+		r.HSet("cursors", userId, res.Cursor)
+		entries = append(entries, res.Entries...)
+	}
+
+	for _, entry := range entries {
+		switch f := entry.(type) {
+		case *files.FileMetadata:
+			download_arg := files.NewDownloadArg(f.PathDisplay)
+			_, contents, _ := dbx.Download(download_arg)
+			defer contents.Close()
+			if shouldSync(f.PathDisplay, userId) {
+				copyToS3(f.PathDisplay, contents)
+			}
+		}
+	}
 }
 
 func redisClient() *redis.Client {
@@ -140,7 +128,7 @@ func redisClient() *redis.Client {
 }
 
 func applyChanges(changeSet ChangeSet) {
-	for _, userId := range changeSet.Delta.Users {
+	for _, userId := range changeSet.ListFolder.Accounts {
 		syncToS3(userId, getDropboxToken(userId))
 	}
 }
@@ -164,7 +152,7 @@ func postgresClient() *sql.DB {
 	checkErr(err)
 	return db
 }
-func getDropboxToken(id int) string {
+func getDropboxToken(id string) string {
 	db := postgresClient()
 	defer db.Close()
 	rows, err := db.Query("SELECT token FROM users WHERE dropbox_user_id=$1", id)
@@ -186,6 +174,6 @@ func main() {
 
 func checkErr(err error) {
 	if err != nil {
-		panic(err)
+		fmt.Printf(err.Error())
 	}
 }
