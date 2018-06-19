@@ -1,6 +1,0 @@
-FROM golang:onbuild
-RUN rm .env
-ADD main.go /go/src/github.com/kissr/kissr-sync-dropbox-s3/main.go
-RUN go install github.com/kissr/kissr-sync-dropbox-s3
-ENTRYPOINT /go/bin/kissr-sync-dropbox-s3
-EXPOSE 8080
